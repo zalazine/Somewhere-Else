@@ -7,35 +7,22 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 
-const locations = [
-  "ห้างสรรพสินค้า", "สนามบิน", "โรงเรียน", "โรงพยาบาล", "สถานีตำรวจ",
-  "ชายหาด", "โรงแรม", "สวนสัตว์", "สถานีรถไฟ", "โรงภาพยนตร์",
-  "ค่ายทหาร", "เรือสำราญ", "คาสิโน", "ร้านอาหาร", "ออฟฟิศ",
-  "สวนสนุก", "สนามกีฬา", "ห้องสมุด", "พิพิธภัณฑ์", "คลับกลางคืน"
-];
-
-const rooms = {};
-
-function generateRoomCode() {
-  return Math.random().toString(36).substr(2, 5);
-}
+const rooms = {}; // เก็บข้อมูลห้องทั้งหมด
 
 io.on('connection', (socket) => {
-  console.log('ผู้เล่นเชื่อมต่อ:', socket.id);
+  console.log('ผู้เล่นใหม่เชื่อมต่อ');
 
-  socket.on('createRoom', ({ playerName, mode }) => {
+  socket.on('createRoom', ({ playerName, gameMode }) => {
     const roomCode = generateRoomCode();
     rooms[roomCode] = {
-      host: socket.id,
+      hostId: socket.id,
       players: [{ id: socket.id, name: playerName, score: 0 }],
       started: false,
-      mode: mode,
-      votes: {},
-      round: 1,
+      gameMode: gameMode,
     };
     socket.join(roomCode);
     socket.emit('roomCreated', { roomCode });
-    io.to(roomCode).emit('updatePlayerList', rooms[roomCode].players, rooms[roomCode].host);
+    console.log(`สร้างห้องใหม่: ${roomCode}`);
   });
 
   socket.on('joinRoom', ({ roomCode, playerName }) => {
@@ -43,103 +30,37 @@ io.on('connection', (socket) => {
     if (room && !room.started) {
       room.players.push({ id: socket.id, name: playerName, score: 0 });
       socket.join(roomCode);
-      io.to(roomCode).emit('updatePlayerList', room.players, room.host);
+      io.to(roomCode).emit('updatePlayerList', {
+        players: room.players,
+        hostId: room.hostId,
+      });
+      socket.emit('joinSuccess', { roomCode });
+      console.log(`${playerName} เข้าห้อง ${roomCode}`);
     } else {
-      socket.emit('errorMessage', 'ไม่สามารถเข้าร่วมได้');
+      socket.emit('joinFailed');
     }
   });
 
   socket.on('startGame', ({ roomCode }) => {
     const room = rooms[roomCode];
-    if (room) {
+    if (room && socket.id === room.hostId && !room.started) {
       room.started = true;
-      const location = locations[Math.floor(Math.random() * locations.length)];
-      const spyIndex = Math.floor(Math.random() * room.players.length);
-      room.location = location;
-      room.spyId = room.players[spyIndex].id;
-      room.players.forEach((player, index) => {
-        if (index === spyIndex) {
-          socket.to(player.id).emit('roleAssignment', { location: "(??? สถานที่ลับ ???)" });
-        } else {
-          socket.to(player.id).emit('roleAssignment', { location });
-        }
-      });
-
-      io.to(roomCode).emit('gameStarted', { location: room.mode === 'normal' ? location : null, mode: room.mode });
-
-      if (room.mode === 'normal') {
-        setTimeout(() => {
-          io.to(roomCode).emit('startVoting');
-        }, 8 * 60 * 1000); // 8 นาที
-      } else if (room.mode === 'lightning') {
-        io.to(roomCode).emit('startLightningRound');
-      }
+      assignRoles(room);
+      io.to(roomCode).emit('gameStarted', { players: room.players, gameMode: room.gameMode });
+      console.log(`เริ่มเกมในห้อง ${roomCode}`);
     }
   });
 
-  socket.on('endLightningRound', ({ roomCode }) => {
+  socket.on('submitVote', ({ roomCode, targetId }) => {
     const room = rooms[roomCode];
-    if (room) {
-      io.to(roomCode).emit('startVoting');
-    }
-  });
-
-  socket.on('castVote', ({ roomCode, votedId }) => {
-    const room = rooms[roomCode];
-    if (room) {
-      room.votes[socket.id] = votedId;
-    }
-  });
-
-  socket.on('endVoting', ({ roomCode }) => {
-    const room = rooms[roomCode];
-    if (room) {
-      const voteCounts = {};
-      Object.values(room.votes).forEach((votedId) => {
-        voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
-      });
-
-      let mostVoted = null;
-      let maxVotes = 0;
-      for (const id in voteCounts) {
-        if (voteCounts[id] > maxVotes) {
-          mostVoted = id;
-          maxVotes = voteCounts[id];
-        }
-      }
-
-      let spyCaught = mostVoted === room.spyId;
-
-      if (spyCaught) {
-        // คนปกติชนะ
-        room.players.forEach(player => {
-          if (player.id !== room.spyId) {
-            player.score += 1;
-          }
-        });
-      } else {
-        // สปายชนะ
-        const spyPlayer = room.players.find(player => player.id === room.spyId);
-        if (spyPlayer) {
-          spyPlayer.score += 2;
-        }
-      }
-
-      io.to(roomCode).emit('revealResult', {
-        spyId: room.spyId,
-        spyCaught,
-        scores: room.players.map(player => ({ name: player.name, score: player.score })),
-      });
-
-      // Reset สำหรับรอบถัดไป
-      room.started = false;
-      room.votes = {};
+    if (room && room.votes) {
+      room.votes[socket.id] = targetId;
+      checkAllVotes(roomCode);
     }
   });
 
   socket.on('disconnect', () => {
-    console.log('ผู้เล่นหลุด:', socket.id);
-
+    console.log('ผู้เล่นหลุดออก');
     for (const roomCode in rooms) {
       const room = rooms[roomCode];
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
@@ -148,17 +69,100 @@ io.on('connection', (socket) => {
 
         if (room.players.length === 0) {
           delete rooms[roomCode];
+          console.log(`ลบห้อง ${roomCode} เพราะไม่มีคน`);
         } else {
-          if (room.host === socket.id) {
-            room.host = room.players[0].id;
+          if (socket.id === room.hostId) {
+            room.hostId = room.players[0].id; // ยกคนแรกเป็น Host
           }
-          io.to(roomCode).emit('updatePlayerList', room.players, room.host);
+          io.to(roomCode).emit('updatePlayerList', {
+            players: room.players,
+            hostId: room.hostId,
+          });
         }
-        break;
       }
     }
   });
 });
+
+// === ฟังก์ชันช่วย ===
+
+function generateRoomCode() {
+  return Math.random().toString(36).substring(2, 7);
+}
+
+function assignRoles(room) {
+  const locations = [
+    "ห้างสรรพสินค้า", "สถานีตำรวจ", "โรงพยาบาล", "โรงแรม", "สนามบิน", "เรือสำราญ",
+    "สถานีอวกาศ", "สวนสนุก", "ชายหาด", "ร้านอาหาร", "ซูเปอร์มาร์เก็ต", "ค่ายทหาร",
+    "โรงหนัง", "สนามกีฬา", "สวนสัตว์", "มหาวิทยาลัย", "ค่ายลูกเสือ", "ตลาดน้ำ",
+    "พิพิธภัณฑ์", "วัด"
+  ];
+  const location = locations[Math.floor(Math.random() * locations.length)];
+
+  const spyIndex = Math.floor(Math.random() * room.players.length);
+
+  room.players.forEach((player, index) => {
+    if (index === spyIndex) {
+      player.role = 'spy';
+      player.location = getFakeLocation(location); // สปายได้สถานที่หลอก
+    } else {
+      player.role = 'civilian';
+      player.location = location;
+    }
+  });
+
+  room.votes = {};
+}
+
+function getFakeLocation(realLocation) {
+  const fakeLocations = [
+    "โรงเรียน", "สนามบิน", "ห้าง", "ร้านอาหาร", "ชายหาด", "ตลาดสด",
+    "ค่ายทหาร", "พิพิธภัณฑ์", "โรงหนัง", "มหาวิทยาลัย"
+  ];
+  let choice;
+  do {
+    choice = fakeLocations[Math.floor(Math.random() * fakeLocations.length)];
+  } while (choice === realLocation);
+  return choice;
+}
+
+function checkAllVotes(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+
+  if (Object.keys(room.votes).length === room.players.length) {
+    const voteCounts = {};
+    Object.values(room.votes).forEach(id => {
+      if (!voteCounts[id]) voteCounts[id] = 0;
+      voteCounts[id]++;
+    });
+
+    const sorted = Object.entries(voteCounts).sort((a, b) => b[1] - a[1]);
+    const [targetId] = sorted[0];
+
+    const targetPlayer = room.players.find(p => p.id === targetId);
+
+    let spyWin = false;
+
+    if (targetPlayer && targetPlayer.role === 'spy') {
+      room.players.forEach(player => {
+        if (player.role === 'civilian') player.score += 1;
+      });
+    } else {
+      const spy = room.players.find(p => p.role === 'spy');
+      if (spy) spy.score += 2;
+      spyWin = true;
+    }
+
+    io.to(roomCode).emit('roundEnded', {
+      spyWin,
+      players: room.players,
+      spyId: room.players.find(p => p.role === 'spy')?.id
+    });
+
+    room.started = false;
+  }
+}
 
 http.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
