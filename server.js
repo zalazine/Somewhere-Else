@@ -3,182 +3,161 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http, {
   cors: {
-    origin: "*"
+    origin: '*'
   }
 });
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 
+const rooms = {};
 const locations = [
-  "โรงพยาบาล", "ห้างสรรพสินค้า", "โรงเรียน", "ชายหาด", "สนามบิน",
-  "สวนสัตว์", "สนามกีฬา", "พิพิธภัณฑ์", "ร้านอาหาร", "โรงละคร",
-  "ตลาดนัด", "ปั๊มน้ำมัน", "สวนสนุก", "มหาวิทยาลัย", "วัด",
-  "สถานีรถไฟ", "ค่ายทหาร", "ห้องสมุด", "สวนน้ำ", "โรงแรม"
+  'ชายหาด', 'ร้านกาแฟ', 'โรงพยาบาล', 'ห้างสรรพสินค้า', 'โรงเรียน', 'สนามบิน',
+  'โรงหนัง', 'พิพิธภัณฑ์', 'สวนสนุก', 'สวนสาธารณะ', 'ฟิตเนส', 'ร้านอาหาร',
+  'ตลาดสด', 'โรงแรม', 'สถานีตำรวจ', 'คลินิกสัตว์', 'สนามกีฬา', 'สระว่ายน้ำ',
+  'ค่ายทหาร', 'คาเฟ่แมว'
 ];
 
-const rooms = {};
-
-function generateRoomId() {
-  return Math.random().toString(36).substring(2, 7);
-}
-
-function assignRoles(players) {
-  const spyIndex = Math.floor(Math.random() * players.length);
-  const location = locations[Math.floor(Math.random() * locations.length)];
-
-  players.forEach((player, idx) => {
-    if (idx === spyIndex) {
-      player.role = 'spy';
-      player.location = location; // อาจให้สปายเดา location ใกล้เคียงได้ในอนาคต
-    } else {
-      player.role = 'normal';
-      player.location = location;
-    }
-  });
-}
-
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  socket.on('createRoom', ({ name, mode }) => {
+  socket.on('createRoom', ({ playerName, mode }) => {
     const roomId = generateRoomId();
     rooms[roomId] = {
-      players: [{ id: socket.id, name, score: 0, isHost: true }],
-      mode,
+      players: [{ id: socket.id, name: playerName, score: 0 }],
       hostId: socket.id,
-      votes: {}
+      mode: mode,
+      started: false,
+      spyCount: 1,
+      spyIndices: [],
+      votes: {},
     };
     socket.join(roomId);
-    socket.emit('roomCreated', { roomId, mode, players: rooms[roomId].players, id: socket.id });
+    socket.emit('roomCreated', { roomId, mode });
+    io.to(roomId).emit('updatePlayerList', rooms[roomId].players);
   });
 
-  socket.on('joinRoom', ({ name, room }) => {
-    const roomData = rooms[room];
-    if (!roomData) return;
-
-    roomData.players.push({ id: socket.id, name, score: 0, isHost: false });
-    socket.join(room);
-    io.to(room).emit('updatePlayers', roomData.players);
-    socket.emit('joinedRoom', { roomId: room, mode: roomData.mode, players: roomData.players, id: socket.id, hostId: roomData.hostId });
-  });
-
-  socket.on('startGame', () => {
-    const roomId = [...socket.rooms][1];
-    const roomData = rooms[roomId];
-    if (!roomData) return;
-
-    assignRoles(roomData.players);
-
-    roomData.players.forEach(player => {
-      io.to(player.id).emit('gameStarted', {
-        role: player.role,
-        location: player.location,
-        mode: roomData.mode
-      });
-    });
-  });
-
-  socket.on('startLightningRound', () => {
-    const roomId = [...socket.rooms][1];
-    io.to(roomId).emit('lightningRound');
-  });
-
-  socket.on('startVoting', () => {
-    const roomId = [...socket.rooms][1];
-    const roomData = rooms[roomId];
-    if (!roomData) return;
-
-    io.to(roomId).emit('startVoting', roomData.players);
-    roomData.votes = {};
-  });
-
-  socket.on('vote', (votedId) => {
-    const roomId = [...socket.rooms][1];
-    const roomData = rooms[roomId];
-    if (!roomData) return;
-
-    roomData.votes[socket.id] = votedId;
-
-    if (Object.keys(roomData.votes).length === roomData.players.length) {
-      const voteCounts = {};
-      Object.values(roomData.votes).forEach(id => {
-        if (id) voteCounts[id] = (voteCounts[id] || 0) + 1;
-      });
-
-      let maxVotes = 0;
-      let suspectId = null;
-      for (const [id, count] of Object.entries(voteCounts)) {
-        if (count > maxVotes) {
-          maxVotes = count;
-          suspectId = id;
-        }
-      }
-
-      const suspect = roomData.players.find(p => p.id === suspectId);
-      const spy = roomData.players.find(p => p.role === 'spy');
-      let spyCaught = false;
-
-      if (suspect && suspect.role === 'spy') {
-        spyCaught = true;
-        roomData.players.forEach(player => {
-          if (player.role !== 'spy') player.score += 1;
-        });
-      } else {
-        if (spy) spy.score += 2;
-      }
-
-      io.to(roomId).emit('voteResult', {
-        spyCaught,
-        winner: spy ? spy.name : "Unknown",
-        players: roomData.players
-      });
+  socket.on('joinRoom', ({ roomId, playerName }) => {
+    if (rooms[roomId]) {
+      rooms[roomId].players.push({ id: socket.id, name: playerName, score: 0 });
+      socket.join(roomId);
+      socket.emit('roomJoined', { roomId, mode: rooms[roomId].mode });
+      io.to(roomId).emit('updatePlayerList', rooms[roomId].players);
+    } else {
+      socket.emit('error', 'ไม่พบห้อง');
     }
   });
 
-  socket.on('newRound', () => {
-    const roomId = [...socket.rooms][1];
-    const roomData = rooms[roomId];
-    if (!roomData) return;
-
-    assignRoles(roomData.players);
-
-    roomData.players.forEach(player => {
-      io.to(player.id).emit('gameStarted', {
-        role: player.role,
-        location: player.location,
-        mode: roomData.mode
-      });
-    });
+  socket.on('startGame', (roomId) => {
+    const room = rooms[roomId];
+    if (room) {
+      assignRoles(roomId);
+      room.started = true;
+    }
   });
 
-  socket.on('endGame', () => {
-    const roomId = [...socket.rooms][1];
-    const roomData = rooms[roomId];
-    if (!roomData) return;
+  socket.on('vote', ({ roomId, votedId }) => {
+    const room = rooms[roomId];
+    if (room) {
+      room.votes[socket.id] = votedId;
+      if (Object.keys(room.votes).length === room.players.length) {
+        endRound(roomId);
+      }
+    }
+  });
 
-    const winner = roomData.players.reduce((prev, current) => (prev.score > current.score) ? prev : current);
-    io.to(roomId).emit('finalResult', { winner: winner.name, score: winner.score });
-    delete rooms[roomId];
+  socket.on('newRound', (roomId) => {
+    const room = rooms[roomId];
+    if (room) {
+      room.started = false;
+      room.votes = {};
+      room.spyIndices = [];
+      assignRoles(roomId);
+    }
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-
-    for (const [roomId, roomData] of Object.entries(rooms)) {
-      const idx = roomData.players.findIndex(p => p.id === socket.id);
-      if (idx !== -1) {
-        roomData.players.splice(idx, 1);
-        io.to(roomId).emit('updatePlayers', roomData.players);
-
-        if (roomData.players.length === 0) {
-          delete rooms[roomId];
-        }
-        break;
+    for (const roomId in rooms) {
+      const room = rooms[roomId];
+      room.players = room.players.filter(player => player.id !== socket.id);
+      if (room.players.length === 0) {
+        delete rooms[roomId];
+      } else {
+        io.to(roomId).emit('updatePlayerList', room.players);
       }
     }
   });
 });
+
+function assignRoles(roomId) {
+  const room = rooms[roomId];
+  const players = room.players;
+  const realLocation = getRandomLocation();
+  const spyIndices = [];
+
+  while (spyIndices.length < room.spyCount) {
+    const randomIndex = Math.floor(Math.random() * players.length);
+    if (!spyIndices.includes(randomIndex)) {
+      spyIndices.push(randomIndex);
+    }
+  }
+
+  players.forEach((player, index) => {
+    if (spyIndices.includes(index)) {
+      const fakeLocation = getRandomFakeLocation(realLocation);
+      io.to(player.id).emit('receiveRole', { role: 'spy', location: fakeLocation });
+    } else {
+      io.to(player.id).emit('receiveRole', { role: 'civilian', location: realLocation });
+    }
+  });
+
+  room.location = realLocation;
+  room.spyIndices = spyIndices;
+}
+
+function endRound(roomId) {
+  const room = rooms[roomId];
+  const voteCount = {};
+  for (const voter in room.votes) {
+    const voted = room.votes[voter];
+    if (!voteCount[voted]) voteCount[voted] = 0;
+    voteCount[voted]++;
+  }
+
+  const maxVotes = Math.max(...Object.values(voteCount));
+  const candidates = Object.keys(voteCount).filter(id => voteCount[id] === maxVotes);
+  const selected = candidates[Math.floor(Math.random() * candidates.length)];
+  const isSpyCaught = room.spyIndices.includes(room.players.findIndex(player => player.id === selected));
+
+  if (isSpyCaught) {
+    room.players.forEach(player => {
+      if (!room.spyIndices.includes(room.players.indexOf(player))) {
+        player.score += 1;
+      }
+    });
+  } else {
+    room.spyIndices.forEach(index => {
+      room.players[index].score += 2;
+    });
+  }
+
+  io.to(roomId).emit('roundEnded', {
+    isSpyCaught,
+    spyNames: room.spyIndices.map(i => room.players[i].name),
+    players: room.players,
+  });
+}
+
+function generateRoomId() {
+  return Math.random().toString(36).substr(2, 5);
+}
+
+function getRandomLocation() {
+  return locations[Math.floor(Math.random() * locations.length)];
+}
+
+function getRandomFakeLocation(realLocation) {
+  const otherLocations = locations.filter(loc => loc !== realLocation);
+  return otherLocations[Math.floor(Math.random() * otherLocations.length)];
+}
 
 http.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
