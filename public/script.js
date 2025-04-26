@@ -1,190 +1,189 @@
-const socket = io();
+document.addEventListener('DOMContentLoaded', () => {
+  const socket = io();
 
-let roomCode = '';
-let playerName = '';
-let isHost = false;
-let selectedMode = 'normal'; // 'normal' = 8 นาที, 'fast' = โหมดสายฟ้า
-let players = [];
-let myId = '';
+  const createRoomBtn = document.getElementById('createRoomBtn');
+  const joinRoomBtn = document.getElementById('joinRoomBtn');
+  const playerNameInput = document.getElementById('playerName');
+  const roomIdInput = document.getElementById('roomId');
+  const gameModeSelect = document.getElementById('gameMode');
+  const menu = document.getElementById('menu');
+  const lobby = document.getElementById('lobby');
+  const showRoomId = document.getElementById('showRoomId');
+  const showMode = document.getElementById('showMode');
+  const playerList = document.getElementById('playerList');
+  const startGameBtn = document.getElementById('startGame');
+  const newRoundBtn = document.getElementById('newRound');
+  const endGameBtn = document.getElementById('endGame');
+  const game = document.getElementById('game');
+  const gameInfo = document.getElementById('gameInfo');
+  const timer = document.getElementById('timer');
+  const vote = document.getElementById('vote');
+  const voteOptions = document.getElementById('voteOptions');
+  const voteTimer = document.getElementById('voteTimer');
+  const result = document.getElementById('result');
+  const resultMessage = document.getElementById('resultMessage');
+  const finalResult = document.getElementById('finalResult');
+  const winnerName = document.getElementById('winnerName');
+  const winnerScore = document.getElementById('winnerScore');
 
-document.getElementById('createRoomBtn').addEventListener('click', () => {
-  playerName = document.getElementById('nameInput').value.trim();
-  selectedMode = document.getElementById('modeSelect').value;
-  if (playerName) {
-    socket.emit('createRoom', { playerName, gameMode: selectedMode });
-  }
-});
+  let myId = '';
+  let isHost = false;
+  let hasVoted = false;
 
-document.getElementById('joinRoomBtn').addEventListener('click', () => {
-  roomCode = document.getElementById('joinRoomInput').value.trim();
-  playerName = document.getElementById('nameInput').value.trim();
-  if (roomCode && playerName) {
-    socket.emit('joinRoom', { roomCode, playerName });
-  }
-});
+  createRoomBtn.addEventListener('click', () => {
+    const name = playerNameInput.value.trim();
+    if (!name) return alert('กรุณากรอกชื่อผู้เล่น');
 
-document.getElementById('startGameBtn').addEventListener('click', () => {
-  if (isHost && roomCode) {
-    socket.emit('startGame', { roomCode });
-    document.getElementById('startGameBtn').disabled = true; // ล็อกปุ่ม
-  }
-});
-
-// ฟังก์ชันอัปเดตรายชื่อผู้เล่น
-function updatePlayerList(players, hostId) {
-  const list = document.getElementById('playerList');
-  list.innerHTML = '';
-  players.forEach(p => {
-    const li = document.createElement('li');
-    li.textContent = p.name + (p.id === hostId ? ' (Host)' : '');
-    list.appendChild(li);
+    const mode = gameModeSelect.value;
+    socket.emit('createRoom', { name, mode });
   });
-}
 
-socket.on('roomCreated', (data) => {
-  roomCode = data.roomCode;
-  isHost = true;
-  myId = socket.id;
-  showLobby();
-});
+  joinRoomBtn.addEventListener('click', () => {
+    const name = playerNameInput.value.trim();
+    const room = roomIdInput.value.trim();
+    if (!name || !room) return alert('กรุณากรอกชื่อและรหัสห้อง');
 
-socket.on('joinSuccess', (data) => {
-  roomCode = data.roomCode;
-  isHost = false;
-  myId = socket.id;
-  showLobby();
-});
-
-socket.on('joinFailed', () => {
-  alert('เข้าห้องไม่สำเร็จ กรุณาตรวจสอบรหัสห้องหรือลองใหม่');
-});
-
-socket.on('updatePlayerList', (data) => {
-  players = data.players;
-  isHost = data.hostId === socket.id;
-  updatePlayerList(players, data.hostId);
-
-  // ถ้าไม่ใช่ Host ให้ปิดปุ่ม Start
-  document.getElementById('startGameBtn').disabled = !isHost;
-});
-
-socket.on('gameStarted', (data) => {
-  const me = data.players.find(p => p.id === socket.id);
-  if (!me) return;
-
-  const roleText = me.role === 'spy' ? 'คุณคือ สปาย 🕵️‍♂️' : 'คุณคือ ผู้บริสุทธิ์ ✅';
-  const locationText = `สถานที่ของคุณ: ${me.location}`;
-
-  document.getElementById('lobbySection').style.display = 'none';
-  document.getElementById('gameSection').style.display = 'block';
-
-  document.getElementById('roleDisplay').innerHTML = `
-    <h2>${roleText}</h2>
-    <p>${locationText}</p>
-  `;
-
-  if (data.gameMode === 'normal') {
-    startNormalMode();
-  } else {
-    startFastMode();
-  }
-});
-
-// ---- ระบบโหมด ----
-
-function startNormalMode() {
-  document.getElementById('fastModeSection').style.display = 'none';
-  document.getElementById('normalModeSection').style.display = 'block';
-
-  let seconds = 480;
-  const timer = document.getElementById('normalTimer');
-  timer.textContent = `เหลือเวลา ${seconds} วินาที`;
-
-  const interval = setInterval(() => {
-    seconds--;
-    timer.textContent = `เหลือเวลา ${seconds} วินาที`;
-    if (seconds <= 0) {
-      clearInterval(interval);
-      showVoting();
-    }
-  }, 1000);
-}
-
-function startFastMode() {
-  document.getElementById('normalModeSection').style.display = 'none';
-  document.getElementById('fastModeSection').style.display = 'block';
-
-  const fastText = document.getElementById('fastText');
-  let playerIndex = 0;
-  let round = 1;
-
-  function nextTurn() {
-    if (round > 2) {
-      showVoting();
-      return;
-    }
-    if (playerIndex >= players.length) {
-      playerIndex = 0;
-      round++;
-      nextTurn();
-      return;
-    }
-    fastText.textContent = `คนต่อไป: ${players[playerIndex].name} - พูด 3 คำ!`;
-    playerIndex++;
-  }
-
-  nextTurn();
-
-  document.getElementById('nextFastTurnBtn').addEventListener('click', () => {
-    nextTurn();
+    socket.emit('joinRoom', { name, room });
   });
-}
 
-// ---- ระบบโหวต ----
+  startGameBtn.addEventListener('click', () => {
+    socket.emit('startGame');
+    startGameBtn.disabled = true;
+  });
 
-function showVoting() {
-  document.getElementById('normalModeSection').style.display = 'none';
-  document.getElementById('fastModeSection').style.display = 'none';
-  document.getElementById('votingSection').style.display = 'block';
+  newRoundBtn.addEventListener('click', () => {
+    socket.emit('newRound');
+    newRoundBtn.disabled = true;
+  });
 
-  const votingList = document.getElementById('votingList');
-  votingList.innerHTML = '';
-  players.forEach(p => {
-    if (p.id !== socket.id) { // ห้ามโหวตตัวเอง
-      const btn = document.createElement('button');
-      btn.textContent = p.name;
-      btn.addEventListener('click', () => {
-        socket.emit('submitVote', { roomCode, targetId: p.id });
-      });
-      votingList.appendChild(btn);
+  endGameBtn.addEventListener('click', () => {
+    socket.emit('endGame');
+  });
+
+  socket.on('roomCreated', ({ roomId, mode, players, id }) => {
+    myId = id;
+    isHost = true;
+    menu.style.display = 'none';
+    lobby.style.display = 'block';
+    showRoomId.textContent = roomId;
+    showMode.textContent = mode === 'classic' ? 'Classic Mode' : 'โหมดสายฟ้า';
+    updatePlayerList(players);
+    startGameBtn.style.display = 'inline-block';
+  });
+
+  socket.on('joinedRoom', ({ roomId, mode, players, id, hostId }) => {
+    myId = id;
+    isHost = (id === hostId);
+    menu.style.display = 'none';
+    lobby.style.display = 'block';
+    showRoomId.textContent = roomId;
+    showMode.textContent = mode === 'classic' ? 'Classic Mode' : 'โหมดสายฟ้า';
+    updatePlayerList(players);
+    startGameBtn.style.display = isHost ? 'inline-block' : 'none';
+  });
+
+  socket.on('updatePlayers', (players) => {
+    updatePlayerList(players);
+  });
+
+  socket.on('gameStarted', ({ role, location, mode }) => {
+    lobby.style.display = 'none';
+    game.style.display = 'block';
+    vote.style.display = 'none';
+    result.style.display = 'none';
+    finalResult.style.display = 'none';
+
+    if (role === 'spy') {
+      gameInfo.textContent = 'คุณคือ สปาย!';
+    } else {
+      gameInfo.textContent = `สถานที่คือ: ${location}`;
+    }
+
+    if (mode === 'classic') {
+      startTimer(8 * 60, timer, () => socket.emit('startVoting'));
+    } else {
+      startTimer(60, timer, () => socket.emit('startLightningRound'));
     }
   });
 
-  let seconds = 30;
-  const timer = document.getElementById('votingTimer');
-  timer.textContent = `เหลือเวลาโหวต ${seconds} วินาที`;
+  socket.on('lightningRound', () => {
+    alert('โหมดสายฟ้า! พูดคำ 3 คำแบบรอบเวียน');
+    socket.emit('startVoting');
+  });
 
-  const interval = setInterval(() => {
-    seconds--;
-    timer.textContent = `เหลือเวลาโหวต ${seconds} วินาที`;
-    if (seconds <= 0) {
-      clearInterval(interval);
+  socket.on('startVoting', (players) => {
+    game.style.display = 'none';
+    vote.style.display = 'block';
+    result.style.display = 'none';
+    finalResult.style.display = 'none';
+
+    voteOptions.innerHTML = '';
+    players.forEach(p => {
+      if (p.id !== myId) {
+        const btn = document.createElement('button');
+        btn.textContent = p.name;
+        btn.onclick = () => {
+          if (!hasVoted) {
+            socket.emit('vote', p.id);
+            hasVoted = true;
+          }
+        };
+        voteOptions.appendChild(btn);
+      }
+    });
+
+    startTimer(30, voteTimer, () => {
+      if (!hasVoted) socket.emit('vote', null);
+    });
+  });
+
+  socket.on('voteResult', ({ spyCaught, winner, players }) => {
+    vote.style.display = 'none';
+    result.style.display = 'block';
+    game.style.display = 'none';
+    finalResult.style.display = 'none';
+
+    if (spyCaught) {
+      resultMessage.textContent = `✅ จับสปายได้! ผู้ชนะคือ: ${winner}`;
+    } else {
+      resultMessage.textContent = `❌ จับผิดตัว! สปายชนะ: ${winner}`;
     }
-  }, 1000);
-}
 
-socket.on('roundEnded', (data) => {
-  document.getElementById('votingSection').style.display = 'none';
-  document.getElementById('endSection').style.display = 'block';
+    if (isHost) {
+      newRoundBtn.style.display = 'inline-block';
+      endGameBtn.style.display = 'inline-block';
+    }
+  });
 
-  const spyName = players.find(p => p.id === data.spyId)?.name || 'ไม่พบ';
-  const resultText = data.spyWin ? `สปายชนะ! คือ ${spyName}` : `สปายแพ้! (${spyName})`;
+  socket.on('finalResult', ({ winner, score }) => {
+    vote.style.display = 'none';
+    result.style.display = 'none';
+    game.style.display = 'none';
+    lobby.style.display = 'none';
+    finalResult.style.display = 'block';
+    winnerName.textContent = `ผู้ชนะ: ${winner}`;
+    winnerScore.textContent = `คะแนน: ${score} คะแนน`;
+  });
 
-  document.getElementById('resultDisplay').innerHTML = `
-    <h2>${resultText}</h2>
-    <h3>สรุปคะแนน</h3>
-    <ul>
-      ${data.players.map(p => `<li>${p.name}: ${p.score} คะแนน</li>`).join('')}
-    </ul>
-  `;
+  function updatePlayerList(players) {
+    playerList.innerHTML = '';
+    players.forEach(p => {
+      const li = document.createElement('li');
+      li.textContent = `${p.name} (${p.score} คะแนน)${p.isHost ? ' (Host)' : ''}`;
+      playerList.appendChild(li);
+    });
+  }
+
+  function startTimer(duration, display, callback) {
+    let timer = duration, minutes, seconds;
+    const interval = setInterval(() => {
+      minutes = Math.floor(timer / 60);
+      seconds = timer % 60;
+      display.textContent = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+      if (--timer < 0) {
+        clearInterval(interval);
+        callback();
+      }
+    }, 1000);
+  }
 });
