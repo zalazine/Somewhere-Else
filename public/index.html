@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spyfall Game</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>Spyfall Game</h1>
+
+  <div id="menu">
+    <input id="playerName" type="text" placeholder="ชื่อผู้เล่น" />
+    <br /><br />
+    <select id="gameMode">
+      <option value="classic">Classic Mode (8 นาที)</option>
+      <option value="lightning">โหมดสายฟ้า (3 คำ x 2 รอบ)</option>
+    </select>
+    <br /><br />
+    <button id="createRoom">สร้างห้องใหม่</button>
+    <button id="joinRoom">เข้าห้อง</button>
+    <input id="roomId" type="text" placeholder="รหัสห้อง" />
+  </div>
+
+  <div id="lobby" style="display: none;">
+    <h2>ห้อง: <span id="showRoomId"></span></h2>
+    <h3>โหมด: <span id="showMode"></span></h3>
+    <h3>รายชื่อผู้เล่น (พร้อมคะแนน):</h3>
+    <ul id="playerList"></ul>
+    <button id="startGame" style="display: none;">เริ่มเกม</button>
+    <button id="newRound" style="display: none;">เริ่มรอบถัดไป</button>
+    <button id="endGame" style="display: none;">จบเกม</button>
+  </div>
+
+  <div id="game" style="display: none;">
+    <h2 id="gameInfo"></h2>
+    <h3 id="timer"></h3>
+  </div>
+
+  <div id="vote" style="display: none;">
+    <h2>เลือกผู้ต้องสงสัย</h2>
+    <div id="voteOptions"></div>
+    <h3 id="voteTimer"></h3>
+  </div>
+
+  <div id="result" style="display: none;">
+    <h2 id="resultMessage"></h2>
+  </div>
+
+  <div id="finalResult" style="display: none;">
+    <h2>🏆 เกมจบแล้ว 🏆</h2>
+    <h3 id="winnerName"></h3>
+    <h3 id="winnerScore"></h3>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
